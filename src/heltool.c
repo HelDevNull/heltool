@@ -16,7 +16,6 @@ void print_help(void)
 
 int fill_buffer(char *buffer, int len)
 {
-    int i = 0;
     char pattern[] = "My kind networks, you inspire me to write. \
                       How I love the way you confusing, \
                       Invading my mind day and through the night, \
@@ -47,17 +46,8 @@ int fill_buffer(char *buffer, int len)
     return 0;
 }
 
-static void report_callback(int sig, siginfo_t *si, void *uc)
-{
-    UNUSED(sig);
-    UNUSED(uc);
-    struct t_eventData *data = (struct t_eventData *) si->_sifields._rt.si_sigval.sival_ptr;
-    data->flag = 1;
-}
-
 int main(int argc, char *argv[])
 {
-    uint64_t i = 0;
     int fd = 0;
     char *group = HELTOOL_GROUP;
     int port = HELTOOL_PORT;
@@ -142,7 +132,7 @@ int main(int argc, char *argv[])
         report.group = group;
         report.port = port;
 
-        (verbose) && printf("Group: %s:%d\n", report.group, report.port);
+        (verbose) && printf("Server. Group: %s:%d\n", report.group, report.port);
 
         if (pthread_create(&server, NULL, server_thread, &report) != 0) {
             perror("Server thread create: ");
@@ -167,58 +157,95 @@ int main(int argc, char *argv[])
     // Act as client
     if (is_server == 0) {        
 
-        int fd;
-        // Setup address        
-        struct sockaddr_in addr;
-        memset(&addr, 0, sizeof(addr));
-        addr.sin_family = AF_INET;
-        addr.sin_addr.s_addr = inet_addr(group);
-        addr.sin_port = htons(port);
+        int ret;        
+        pthread_t client;
 
-        // Create network socket
-        fd = socket(AF_INET, SOCK_DGRAM, 0);
-        if (fd < 0) {
-            perror("socket");
-            return 1;
+        report.verbose = verbose;
+        report.group = group;
+        report.port = port;
+        report.count = count;
+
+        (verbose) && printf("Client. Group: %s:%d\n", report.group, report.port);
+
+        if (pthread_create(&client, NULL, client_thread, &report) != 0) {
+            perror("Client thread create: ");
+            printf("error\n");
+            exit(1);
+        }
+        printf("HELTOOL client report:\n");
+        while(1) {
+            ret = pthread_tryjoin_np(client, NULL);
+            if (ret == 0)
+                break; // client thread has terminated
+
+            sleep(report_interval);
+            printf("Pkts: %lu, Miss (batches): %d, Miss (pkts): %lu, deltaT: %f\n", 
+                    report.packets, report.miss_events, report.missing, report.deltaT);
         }
 
-        char buffer[17] = "................";
-        char payload[PAYLOAD_SIZE] = "";
-        int bytes_written = 0;
-        int sleep_res;
-   
-        (verbose) && printf("Count: %lu\n", count);
-        (verbose) && printf("Delay: %lu s, %lu ns\n", sleeptime.tv_sec, sleeptime.tv_nsec);
-        
-        fill_buffer(&payload[16], PAYLOAD_SIZE - 16);
-        i = 0;
-        while (i < count) { 
-            bytes_written = sprintf(buffer, "%08lX", i);
-            (verbose) && printf("%s\n", buffer);
-            buffer[bytes_written] = ' ';
-            memcpy(payload, buffer, 16);          
-            i++; 
-            // Send message!
-            int tx_size = sendto(fd, payload, PAYLOAD_SIZE, 0,
-                    (struct sockaddr*) &addr, sizeof(addr));
-            if (tx_size < 0)
-                perror("sendto");
-            
-            //Meassure time
-            old = new;
-            clock_gettime(CLOCK_REALTIME, &new);
-            (verbose) && printf("Delay: %lus, %luns\n", new.tv_sec - old.tv_sec, new.tv_nsec - old.tv_nsec);
-            //sleep to control packet sending rate
-            if (i < count) {
-                sleep_res = nanosleep(&sleeptime, &sleepleft);
-                //printf("left: %d, %lu\n", sleep_res, sleepleft.tv_nsec);                
-            }
-        }
+
+
     }
     return 0;
 }
 
 
+void *client_thread(void *arg)
+{
+    int fd;
+    struct t_reporting *report = (struct t_reporting *)arg;
+    struct timespec sleeptime, sleepleft = {0, 1000000L};
+    struct timespec new, old = {0,0L};
+    // Setup address        
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = inet_addr(report->group);
+    addr.sin_port = htons(report->port);
+
+    // Create network socket
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) {
+        perror("socket");
+        pthread_exit(report);
+    }
+
+    char buffer[17] = "................";
+    char payload[PAYLOAD_SIZE] = "";
+    int bytes_written = 0;
+    int sleep_res;
+
+    (report->verbose) && printf("Count: %lu\n", report->count);
+    (report->verbose) && printf("Delay: %lu s, %lu ns\n", sleeptime.tv_sec, sleeptime.tv_nsec);
+
+    fill_buffer(&payload[16], PAYLOAD_SIZE - 16);
+
+    printf("Client ready: %s:%d\n", report->group, report->port);
+    long i = 0;
+    while (i < report->count) { 
+        bytes_written = sprintf(buffer, "%08lX", i);
+        (report->verbose) && printf("%s\n", buffer);
+        buffer[bytes_written] = ' ';
+        memcpy(payload, buffer, 16);          
+        i++; 
+        // Send message!
+        int tx_size = sendto(fd, payload, PAYLOAD_SIZE, 0,
+                (struct sockaddr*) &addr, sizeof(addr));
+        if (tx_size < 0)
+            perror("sendto");
+
+        //Meassure time
+        old = new;
+        clock_gettime(CLOCK_REALTIME, &new);
+        (report->verbose) && printf("Delay: %lus, %luns\n", new.tv_sec - old.tv_sec, new.tv_nsec - old.tv_nsec);
+        //sleep to control packet sending rate
+        if (i < report->count) {
+            sleep_res = nanosleep(&sleeptime, &sleepleft);
+            //printf("left: %d, %lu\n", sleep_res, sleepleft.tv_nsec);                
+        }
+    }
+    pthread_exit(report);
+}
 
 void *server_thread(void *arg)
 {    
@@ -230,6 +257,7 @@ void *server_thread(void *arg)
     int verbose = report->verbose;
     unsigned int yes = 0;
 
+    printf("ServerThread! %d\n", verbose);
     report->retval = 1;
     
     // Create network socket
@@ -238,14 +266,12 @@ void *server_thread(void *arg)
         perror("socket");
         pthread_exit(report);
     }
-
     // Allow sockets to use same port number
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char*) &yes, sizeof(yes)) < 0) {
         perror("Reusing ADDR failed");
         pthread_exit(report);
 
     }
-
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
@@ -258,7 +284,6 @@ void *server_thread(void *arg)
         pthread_exit(report);
 
     }
-
     // use setsockopt() to request that the kernel join a multicast group
 
     struct ip_mreq mreq;
@@ -274,11 +299,13 @@ void *server_thread(void *arg)
     }
 
     // Main server loop    
+    //
+    printf("Server is listening on %s:%d\n", report->group, report->port);
     while (1) {
         old = new;
         old_seq = new_seq;
         char pktbuf[PAYLOAD_SIZE];
-        int addrlen = sizeof(addr);
+        unsigned int addrlen = sizeof(addr);
         int nbytes = recvfrom(
                 fd,
                 pktbuf,
@@ -288,7 +315,8 @@ void *server_thread(void *arg)
                 &addrlen
                 );
         if (nbytes < 0)
-            perror("recvfrom");                
+            perror("recvfrom");
+        printf("Packet\n");
         report->packets++;
         memcpy(buffer, pktbuf, 8);
         buffer[9]='\0';

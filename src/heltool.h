@@ -47,6 +47,7 @@ struct t_reporting{
     int verbose;
     char *group;
     int port;
+    long count;
     long packets;
     int miss_events;
     long missing;
@@ -57,6 +58,6 @@ struct t_reporting{
 // ************ Functions ***********
 void print_help(void);
 int fill_buffer(char *buffer, int len);
-static void report_callback(int sig, siginfo_t *si, void *uc);
 
 void *server_thread(void *arg);
+void *client_thread(void *arg);

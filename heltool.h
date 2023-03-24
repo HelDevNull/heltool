@@ -2,19 +2,29 @@
  * Copyright Henrik Envall 2022
  */
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <stdint.h>
+
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+
 #include <getopt.h>
 #include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
+
+#include <signal.h>
 #include <time.h>
-#include <sys/time.h>
-#include <stdint.h>
+#include <errno.h>
+
+#include <pthread.h>
 
 // ************ Defines ***********
+
+//Unused macro
+#define UNUSED(x) (void)(x)
 
 /// Packet payload size
 #define PAYLOAD_SIZE 1024
@@ -26,8 +36,27 @@
 /// Reporting default interval 10 seconds 
 #define HELTOOL_REPORT 10 
 
+
+// *********** Structs ************
+
+struct t_eventData{
+    int flag;
+};
+
+struct t_reporting{
+    int verbose;
+    char *group;
+    int port;
+    long packets;
+    int miss_events;
+    long missing;
+    double deltaT;
+    int retval;
+};
+
 // ************ Functions ***********
 void print_help(void);
 int fill_buffer(char *buffer, int len);
+static void report_callback(int sig, siginfo_t *si, void *uc);
 
-
+void *server_thread(void *arg);

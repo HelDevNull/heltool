@@ -47,11 +47,18 @@ int fill_buffer(char *buffer, int len)
     return 0;
 }
 
+static void report_callback(int sig, siginfo_t *si, void *uc)
+{
+    UNUSED(sig);
+    UNUSED(uc);
+    struct t_eventData *data = (struct t_eventData *) si->_sifields._rt.si_sigval.sival_ptr;
+    data->flag = 1;
+}
+
 int main(int argc, char *argv[])
 {
     uint64_t i = 0;
     int fd = 0;
-    unsigned int yes = 0;
     char *group = HELTOOL_GROUP;
     int port = HELTOOL_PORT;
     int index;
@@ -61,11 +68,16 @@ int main(int argc, char *argv[])
     long count = 10;
     struct timespec sleeptime, sleepleft = {0, 1000000L};
     struct timespec new, old = {0,0L};
+
+    struct t_reporting report = {0};
+    
     double elapsed_time = 0.0;
     int verbose = 0;
     int report_interval = HELTOOL_REPORT;
 
     clock_gettime(CLOCK_REALTIME, &new);
+
+    // Handle command line arguments
     while ((opt = getopt(argc, argv, "scg:p:n:d:vr:")) != -1)
 
         switch (opt) {
@@ -93,6 +105,7 @@ int main(int argc, char *argv[])
                 break;
             case 'r':
                 (optarg != NULL) && (report_interval = atoi(optarg));                
+                break;
             case '?':
                 print_help();
                 return 1;
@@ -119,96 +132,55 @@ int main(int argc, char *argv[])
         sleeptime.tv_sec = delay_usec / 1000;
     }
 
-    (verbose) && printf("Group: %s:%d\n", group, port);
-    
 
-
-    // Create network socket
-    fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd < 0) {
-        perror("socket");
-        return 1;
-    }
     // Act as server!
     if (is_server == 1) {
 
-        long old_seq, new_seq = -1L;
-        char buffer[10] = "";
-        // Allow sockets to use same port number
-        if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char*) &yes, sizeof(yes)) < 0) {
-            perror("Reusing ADDR failed");
-            return 1;
+        pthread_t server;
+
+        report.verbose = verbose;
+        report.group = group;
+        report.port = port;
+
+        (verbose) && printf("Group: %s:%d\n", report.group, report.port);
+
+        if (pthread_create(&server, NULL, server_thread, &report) != 0) {
+            perror("Server thread create: ");
+            printf("error\n");
+            exit(1);
         }
-
-
-        struct sockaddr_in addr;
-        memset(&addr, 0, sizeof(addr));
-        addr.sin_family = AF_INET;
-        addr.sin_addr.s_addr = htonl(INADDR_ANY); // differs from sender
-        addr.sin_port = htons(HELTOOL_PORT);
-
-        // bind to receive address
-        if (bind(fd, (struct sockaddr*) &addr, sizeof(addr)) < 0) {
-            perror("bind");
-            return 1;
+        printf("HELTOOL server report:\n");
+        while(1) {
+            sleep(report_interval);
+            printf("Pkts: %lu, Miss (batches): %d, Miss (pkts): %lu, deltaT: %f\n", 
+                    report.packets, report.miss_events, report.missing, report.deltaT);
         }
-
-        // use setsockopt() to request that the kernel join a multicast group
-
-        struct ip_mreq mreq;
-        mreq.imr_multiaddr.s_addr = inet_addr(group);
-        mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-        if (
-                setsockopt(
-                    fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char*) &mreq, sizeof(mreq)
-                    ) < 0
-           ){
-            perror("setsockopt");
-            return 1;
-        }
-
-        // now just enter a read-print loop
-        //
-        while (1) {
-            old = new;
-            old_seq = new_seq;
-            char pktbuf[PAYLOAD_SIZE];
-            int addrlen = sizeof(addr);
-            int nbytes = recvfrom(
-                    fd,
-                    pktbuf,
-                    PAYLOAD_SIZE,
-                    0,
-                    (struct sockaddr *) &addr,
-                    &addrlen
-                    );
-            if (nbytes < 0) {
-                perror("recvfrom");                
-            }
-            memcpy(buffer, pktbuf, 8);
-            buffer[9]='\0';
-            new_seq = strtol(buffer, NULL, 16);
-            pktbuf[nbytes] = '\0';
-            (verbose) && printf("%.8s\n", pktbuf);                        
-            clock_gettime(CLOCK_REALTIME, &new);
-            (verbose) && printf("Delay: %lus, %luns\n", new.tv_sec - old.tv_sec, new.tv_nsec - old.tv_nsec);
-            if ((new_seq > 0) && (new_seq != (old_seq +1)))  {
-                printf("Missing packets: %lu DeltaT: (%lu s:%lu ns)\n", 
-                        new_seq - old_seq, new.tv_sec - old.tv_sec, new.tv_nsec - old.tv_nsec);
-                        
-            }
+            /*
+               int srv_ret = 0;
+               if (pthread_join(server, &srv_ret) != 0) {
+               perror("Server thread join: ");
+               exit(1);
+               }
+               */
 
         }
-
-    }
     // Act as client
     if (is_server == 0) {        
-        // Setup address
+
+        int fd;
+        // Setup address        
         struct sockaddr_in addr;
         memset(&addr, 0, sizeof(addr));
         addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = inet_addr(group);
         addr.sin_port = htons(port);
+
+        // Create network socket
+        fd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (fd < 0) {
+            perror("socket");
+            return 1;
+        }
 
         char buffer[17] = "................";
         char payload[PAYLOAD_SIZE] = "";
@@ -244,4 +216,105 @@ int main(int argc, char *argv[])
         }
     }
     return 0;
+}
+
+
+
+void *server_thread(void *arg)
+{    
+    struct t_reporting *report = (struct t_reporting *)arg;
+    int fd;
+    long old_seq, new_seq = -1L;
+    char buffer[10] = "";
+    struct timespec new, old = {0,0L};
+    int verbose = report->verbose;
+    unsigned int yes = 0;
+
+    report->retval = 1;
+    
+    // Create network socket
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) {
+        perror("socket");
+        pthread_exit(report);
+    }
+
+    // Allow sockets to use same port number
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char*) &yes, sizeof(yes)) < 0) {
+        perror("Reusing ADDR failed");
+        pthread_exit(report);
+
+    }
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY); // differs from sender
+    addr.sin_port = htons(report->port);
+
+    // bind to receive address
+    if (bind(fd, (struct sockaddr*) &addr, sizeof(addr)) < 0) {
+        perror("bind");
+        pthread_exit(report);
+
+    }
+
+    // use setsockopt() to request that the kernel join a multicast group
+
+    struct ip_mreq mreq;
+    mreq.imr_multiaddr.s_addr = inet_addr(report->group);
+    mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+    if (
+            setsockopt(
+                fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char*) &mreq, sizeof(mreq)
+                ) < 0
+       ){
+        perror("setsockopt");
+        pthread_exit(report);
+    }
+
+    // Main server loop    
+    while (1) {
+        old = new;
+        old_seq = new_seq;
+        char pktbuf[PAYLOAD_SIZE];
+        int addrlen = sizeof(addr);
+        int nbytes = recvfrom(
+                fd,
+                pktbuf,
+                PAYLOAD_SIZE,
+                0,
+                (struct sockaddr *) &addr,
+                &addrlen
+                );
+        if (nbytes < 0)
+            perror("recvfrom");                
+        report->packets++;
+        memcpy(buffer, pktbuf, 8);
+        buffer[9]='\0';
+        new_seq = strtol(buffer, NULL, 16);
+        pktbuf[nbytes] = '\0';
+        (verbose) && printf("%.8s\n", pktbuf);                        
+        clock_gettime(CLOCK_REALTIME, &new);
+        if (new_seq == 0) {
+            printf("Server: New test detected\n");
+            report->packets = 1;
+            report->missing = 0;
+            report->miss_events = 0;
+            report->deltaT = 0.0;
+        }
+        (verbose) && printf("Delay: %lus, %luns\n", new.tv_sec - old.tv_sec, new.tv_nsec - old.tv_nsec);
+        if ((new_seq > 0) && (new_seq != (old_seq +1)))  {
+            printf("Missing packets: %lu DeltaT: (%lu s:%lu ns)\n", 
+                    new_seq - old_seq, new.tv_sec - old.tv_sec, new.tv_nsec - old.tv_nsec);
+            report->miss_events++;
+            report->missing = new_seq - old_seq;
+            report->deltaT = (new.tv_sec - old.tv_sec) + (new.tv_nsec - old.tv_nsec)*1e-9;
+
+        }
+
+    }
+    report->retval = 0;
+    pthread_exit(report);
+
 }

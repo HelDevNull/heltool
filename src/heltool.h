@@ -49,6 +49,7 @@ struct t_reporting{
     int port;
     long count;
     long packets;
+    long packet_batch;
     int miss_events;
     long missing;
     double deltaT;

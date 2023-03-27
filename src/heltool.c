@@ -139,11 +139,14 @@ int main(int argc, char *argv[])
             printf("error\n");
             exit(1);
         }
+        sleep(1);
         printf("HELTOOL server report:\n");
+        printf("---------------------\n");
+        printf("Total packets\tBatch\tLost pkts\tLost batches\tLast deltaT\n");
         while(1) {
             sleep(report_interval);
-            printf("Pkts: %lu, Miss (batches): %d, Miss (pkts): %lu, deltaT: %f\n", 
-                    report.packets, report.miss_events, report.missing, report.deltaT);
+            printf("%lu\t\t%lu\t%lu\t\t\%d\t\t%f\n", report.packets, report.packet_batch,
+                    report.missing, report.miss_events, report.deltaT);
         }
             /*
                int srv_ret = 0;
@@ -257,7 +260,7 @@ void *server_thread(void *arg)
     int verbose = report->verbose;
     unsigned int yes = 0;
 
-    printf("ServerThread! %d\n", verbose);
+    //printf("ServerThread! %d\n", verbose);
     report->retval = 1;
     
     // Create network socket
@@ -299,7 +302,8 @@ void *server_thread(void *arg)
     }
 
     // Main server loop    
-    //
+    
+    report->packets = 0;
     printf("Server is listening on %s:%d\n", report->group, report->port);
     while (1) {
         old = new;
@@ -316,8 +320,9 @@ void *server_thread(void *arg)
                 );
         if (nbytes < 0)
             perror("recvfrom");
-        printf("Packet\n");
+        //printf("Packet\n");
         report->packets++;
+        report->packet_batch++;
         memcpy(buffer, pktbuf, 8);
         buffer[9]='\0';
         new_seq = strtol(buffer, NULL, 16);
@@ -326,9 +331,9 @@ void *server_thread(void *arg)
         clock_gettime(CLOCK_REALTIME, &new);
         if (new_seq == 0) {
             printf("Server: New test detected\n");
-            report->packets = 1;
-            report->missing = 0;
-            report->miss_events = 0;
+            report->packet_batch = 1;
+            //report->missing = 0;
+            //report->miss_events = 0;
             report->deltaT = 0.0;
         }
         (verbose) && printf("Delay: %lus, %luns\n", new.tv_sec - old.tv_sec, new.tv_nsec - old.tv_nsec);

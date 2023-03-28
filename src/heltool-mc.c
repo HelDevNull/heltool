@@ -1,4 +1,4 @@
-#include "heltool.h"
+#include "heltool-mc.h"
 
 void print_help(void)
 {
@@ -7,8 +7,8 @@ void print_help(void)
     printf("s:\t\tServer\n");
     printf("c:\t\tClient\n");
     printf("v:\t\tVerbose\n");
-    printf("n <#>:\tCount. Default 10\n");
-    printf("d <msek>:\tDelay in msek between packets. Default 1000\n");
+    printf("n <#>:\t\tCount. Default %d\n", HELTOOL_COUNT);
+    printf("d <msek>:\tDelay in msek between packets. Default %d\n", HELTOOL_INTERVAL);
     printf("g <group>:\tMulticast group to use. Default: %s\n", HELTOOL_GROUP);
     printf("p <port>:\tPort to use. Default: %d\n", HELTOOL_PORT);
     printf("r <seconds>:\tServer reporting interval. Default: %d\n", HELTOOL_REPORT);
@@ -48,24 +48,16 @@ int fill_buffer(char *buffer, int len)
 
 int main(int argc, char *argv[])
 {
-    int fd = 0;
     char *group = HELTOOL_GROUP;
     int port = HELTOOL_PORT;
-    int index;
     int opt;
     int is_server = -1;
-    int delay_usec = 1000;
-    long count = 10;
-    struct timespec sleeptime, sleepleft = {0, 1000000L};
-    struct timespec new, old = {0,0L};
-
+    int delay_msec = HELTOOL_INTERVAL;
+    long count = HELTOOL_COUNT;
+    struct timespec sleeptime;
     struct t_reporting report = {0};
-    
-    double elapsed_time = 0.0;
     int verbose = 0;
     int report_interval = HELTOOL_REPORT;
-
-    clock_gettime(CLOCK_REALTIME, &new);
 
     // Handle command line arguments
     while ((opt = getopt(argc, argv, "scg:p:n:d:vr:")) != -1)
@@ -88,7 +80,7 @@ int main(int argc, char *argv[])
                 //(optarg != NULL) && printf("c: %s", optarg);
                 break;
             case 'd':
-                (optarg != NULL) && (delay_usec = atoi(optarg));
+                (optarg != NULL) && (delay_msec = atoi(optarg));
                 break;
             case 'v':
                 verbose = 1;
@@ -114,14 +106,15 @@ int main(int argc, char *argv[])
         count = MAX_COUNT;
     }
 
-    if (delay_usec < 1000000L) {
-        sleeptime.tv_nsec = delay_usec * 1000L;
+    /// Convert sleeptime between packets to timespec nanosecond format
+    if (delay_msec < 1000L) {
+        sleeptime.tv_nsec = delay_msec * 1000000L;
         sleeptime.tv_sec = 0;
     } else {
         sleeptime.tv_nsec = 0L;
-        sleeptime.tv_sec = delay_usec / 1000;
+        sleeptime.tv_sec = delay_msec / 1000;
     }
-
+    report.sleeptime = sleeptime;
 
     // Act as server!
     if (is_server == 1) {
@@ -148,15 +141,9 @@ int main(int argc, char *argv[])
             printf("%lu\t\t%lu\t%lu\t\t\%d\t\t%f\n", report.packets, report.packet_batch,
                     report.missing, report.miss_events, report.deltaT);
         }
-            /*
-               int srv_ret = 0;
-               if (pthread_join(server, &srv_ret) != 0) {
-               perror("Server thread join: ");
-               exit(1);
-               }
-               */
 
-        }
+
+    }
     // Act as client
     if (is_server == 0) {        
 
@@ -178,12 +165,11 @@ int main(int argc, char *argv[])
         printf("HELTOOL client report:\n");
         while(1) {
             ret = pthread_tryjoin_np(client, NULL);
-            if (ret == 0)
+            if (ret == 0) {
+                printf("Client done. Sent %lu pkts\n", report.packets);
                 break; // client thread has terminated
-
-            sleep(report_interval);
-            printf("Pkts: %lu, Miss (batches): %d, Miss (pkts): %lu, deltaT: %f\n", 
-                    report.packets, report.miss_events, report.missing, report.deltaT);
+            }
+            sleep(1);
         }
 
 
@@ -197,7 +183,7 @@ void *client_thread(void *arg)
 {
     int fd;
     struct t_reporting *report = (struct t_reporting *)arg;
-    struct timespec sleeptime, sleepleft = {0, 1000000L};
+    struct timespec sleepleft;
     struct timespec new, old = {0,0L};
     // Setup address        
     struct sockaddr_in addr;
@@ -216,13 +202,12 @@ void *client_thread(void *arg)
     char buffer[17] = "................";
     char payload[PAYLOAD_SIZE] = "";
     int bytes_written = 0;
-    int sleep_res;
 
     (report->verbose) && printf("Count: %lu\n", report->count);
-    (report->verbose) && printf("Delay: %lu s, %lu ns\n", sleeptime.tv_sec, sleeptime.tv_nsec);
+    (report->verbose) && printf("Delay: %lu s, %lu ns\n", report->sleeptime.tv_sec, report->sleeptime.tv_nsec);
 
     fill_buffer(&payload[16], PAYLOAD_SIZE - 16);
-
+    printf("Client delay: %lu, %lu\n", report->sleeptime.tv_sec, report->sleeptime.tv_nsec);
     printf("Client ready: %s:%d\n", report->group, report->port);
     long i = 0;
     while (i < report->count) { 
@@ -236,15 +221,14 @@ void *client_thread(void *arg)
                 (struct sockaddr*) &addr, sizeof(addr));
         if (tx_size < 0)
             perror("sendto");
-
+        report->packets++;
         //Meassure time
         old = new;
         clock_gettime(CLOCK_REALTIME, &new);
         (report->verbose) && printf("Delay: %lus, %luns\n", new.tv_sec - old.tv_sec, new.tv_nsec - old.tv_nsec);
         //sleep to control packet sending rate
         if (i < report->count) {
-            sleep_res = nanosleep(&sleeptime, &sleepleft);
-            //printf("left: %d, %lu\n", sleep_res, sleepleft.tv_nsec);                
+            nanosleep(&(report->sleeptime), &sleepleft);
         }
     }
     pthread_exit(report);

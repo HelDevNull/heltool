@@ -1,20 +1,49 @@
-TARGET ?= heltool
-SRC_DIRS ?= ./src
+SRC_DIR := src
+OBJ_DIR := obj
+BIN_DIR := bin
 
-SRCS := $(shell find $(SRC_DIRS) -name *.cpp -or -name *.c -or -name *.s)
-OBJS := $(addsuffix .o,$(basename $(SRCS)))
-DEPS := $(OBJS:.o=.d)
+EXE1 := $(BIN_DIR)/heltool-mc
+EXE2 := $(BIN_DIR)/heltool-u2t
+EXE3 := $(BIN_DIR)/heltool-t2u
 
-INC_DIRS := $(shell find $(SRC_DIRS) -type d)
-INC_FLAGS := $(addprefix -I,$(INC_DIRS))
+SRC1 := $(SRC_DIR)/heltool-mc.c
+OBJ1 := $(SRC1:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 
-CPPFLAGS ?= $(INC_FLAGS) -MMD -MP -D_GNU_SOURCE -pthread
+SRC2 := $(SRC_DIR)/heltool-u2t.c
+OBJ2 := $(SRC2:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 
-$(TARGET): $(OBJS)
-	$(CC) $(LDFLAGS) $(OBJS) -o $@ $(LOADLIBES) $(LDLIBS)
+SRC3 := $(SRC_DIR)/heltool-u2t.c
+OBJ3 := $(SRC2:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 
-.PHONY: clean
+
+CPPFLAGS := -Iinclude -MMD -MP
+CFLAGS   := -Wall -pthread
+LDFLAGS  := -Llib
+LDLIBS   := 
+
+.PHONY: all clean
+
+all: $(EXE1) $(EXE2) $(EXE3)
+
+$(EXE1): $(OBJ1) | $(BIN_DIR)
+	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
+
+$(EXE2): $(OBJ2) | $(BIN_DIR)
+	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
+
+
+$(EXE3): $(OBJ3) | $(BIN_DIR)
+	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
+
+
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+$(BIN_DIR) $(OBJ_DIR):
+	mkdir -p $@
+
 clean:
-	$(RM) $(TARGET) $(OBJS) $(DEPS)
+	@$(RM) -rv $(BIN_DIR) $(OBJ_DIR)
 
--include $(DEPS)
+-include $(OBJ:.o=.d)
+

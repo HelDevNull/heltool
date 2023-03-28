@@ -19,6 +19,9 @@
 #include <time.h>
 #include <errno.h>
 
+// for pthread_tryjoin_np
+#define __USE_GNU
+
 #include <pthread.h>
 
 // ************ Defines ***********
@@ -35,6 +38,10 @@
 #define MAX_COUNT 1000000000UL                           
 /// Reporting default interval 10 seconds 
 #define HELTOOL_REPORT 10 
+/// Default count
+#define HELTOOL_COUNT 100
+/// Default interval
+#define HELTOOL_INTERVAL 100
 
 
 // *********** Structs ************
@@ -48,6 +55,7 @@ struct t_reporting{
     char *group;
     int port;
     long count;
+    struct timespec sleeptime;
     long packets;
     long packet_batch;
     int miss_events;

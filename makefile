@@ -1,49 +1,21 @@
-SRC_DIR := src
-OBJ_DIR := obj
-BIN_DIR := bin
+CC=gcc
+CFLAGS=-Wall -Os -pthread
 
-EXE1 := $(BIN_DIR)/heltool-mc
-EXE2 := $(BIN_DIR)/heltool-u2t
-EXE3 := $(BIN_DIR)/heltool-t2u
+SRCDIR=src
 
-SRC1 := $(SRC_DIR)/heltool-mc.c
-OBJ1 := $(SRC1:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
+PROGRAMS=heltool-mc heltool-u2t heltool-t2u
 
-SRC2 := $(SRC_DIR)/heltool-u2t.c
-OBJ2 := $(SRC2:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
+all: $(PROGRAMS)
 
-SRC3 := $(SRC_DIR)/heltool-u2t.c
-OBJ3 := $(SRC2:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
+heltool-mc: $(SRCDIR)/heltool-mc.c $(SRCDIR)/heltool-mc.h
+	$(CC) $(CFLAGS) -o $@ $<
 
+heltool-u2t: $(SRCDIR)/heltool-u2t.c $(SRCDIR)/heltool-u2t.h
+	$(CC) $(CFLAGS) -o $@ $<
 
-CPPFLAGS := -Iinclude -MMD -MP
-CFLAGS   := -Wall -pthread
-LDFLAGS  := -Llib
-LDLIBS   := 
-
-.PHONY: all clean
-
-all: $(EXE1) $(EXE2) $(EXE3)
-
-$(EXE1): $(OBJ1) | $(BIN_DIR)
-	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
-
-$(EXE2): $(OBJ2) | $(BIN_DIR)
-	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
-
-
-$(EXE3): $(OBJ3) | $(BIN_DIR)
-	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $@
-
-
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
-
-$(BIN_DIR) $(OBJ_DIR):
-	mkdir -p $@
+heltool-t2u: $(SRCDIR)/heltool-t2u.c $(SRCDIR)/heltool-t2u.h
+	$(CC) $(CFLAGS) -o $@ $<
 
 clean:
-	@$(RM) -rv $(BIN_DIR) $(OBJ_DIR)
-
--include $(OBJ:.o=.d)
+	rm -f $(PROGRAMS)
 
